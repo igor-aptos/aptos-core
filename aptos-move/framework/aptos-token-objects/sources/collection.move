@@ -25,6 +25,7 @@ module aptos_token_objects::collection {
     use aptos_framework::object::{Self, ConstructorRef, Object};
 
     use aptos_token_objects::royalty::{Self, Royalty};
+    use aptos_token_objects::bucketed_supply::{Self, BucketedSupplyCounter};
 
     friend aptos_token_objects::token;
 
@@ -87,6 +88,17 @@ module aptos_token_objects::collection {
     }
 
     #[resource_group_member(group = aptos_framework::object::ObjectGroup)]
+    /// Fixed supply tracker, this is useful for ensuring that a limited number of tokens are minted.
+    /// and adding events and supply tracking to a collection.
+    struct BucketedFixedSupply has key {
+        supply_counter: Object<BucketedSupplyCounter>,
+        /// Emitted upon burning a Token.
+        burn_events: event::EventHandle<BurnEvent>,
+        /// Emitted upon minting an Token.
+        mint_events: event::EventHandle<MintEvent>,
+    }
+
+    #[resource_group_member(group = aptos_framework::object::ObjectGroup)]
     /// Unlimited supply tracker, this is useful for adding events and supply tracking to a collection.
     struct UnlimitedSupply has key {
         current_supply: u64,
@@ -129,6 +141,40 @@ module aptos_token_objects::collection {
             current_supply: 0,
             max_supply,
             total_minted: 0,
+            burn_events: object::new_event_handle(&object_signer),
+            mint_events: object::new_event_handle(&object_signer),
+        };
+
+        create_collection_internal(
+            creator,
+            constructor_ref,
+            description,
+            name,
+            royalty,
+            uri,
+            option::some(supply),
+        )
+    }
+
+    public fun create_bucketed_fixed_collection(
+        creator: &signer,
+        description: String,
+        max_supply: u64,
+        name: String,
+        royalty: Option<Royalty>,
+        uri: String,
+    ): ConstructorRef {
+        assert!(max_supply != 0, error::invalid_argument(EMAX_SUPPLY_CANNOT_BE_ZERO));
+        let collection_seed = create_collection_seed(&name);
+        let constructor_ref = object::create_named_object(creator, collection_seed);
+        let object_signer = object::generate_signer(&constructor_ref);
+
+        let supply = BucketedFixedSupply {
+            supply_counter: bucketed_supply::create_bucketed_supply(
+                signer::address_of(creator),
+                max_supply,
+                16,
+            ),
             burn_events: object::new_event_handle(&object_signer),
             mint_events: object::new_event_handle(&object_signer),
         };
@@ -254,14 +300,15 @@ module aptos_token_objects::collection {
     public(friend) fun increment_supply(
         collection: &Object<Collection>,
         token: address,
-    ): Option<u64> acquires FixedSupply, UnlimitedSupply {
+    ): Option<u64> acquires FixedSupply, UnlimitedSupply, BucketedFixedSupply {
         let collection_addr = object::object_address(collection);
         if (exists<FixedSupply>(collection_addr)) {
             let supply = borrow_global_mut<FixedSupply>(collection_addr);
             supply.current_supply = supply.current_supply + 1;
             supply.total_minted = supply.total_minted + 1;
             assert!(
-                supply.current_supply <= supply.max_supply,
+                0 > 1,
+                // supply.current_supply <= supply.max_supply,
                 error::out_of_range(ECOLLECTION_SUPPLY_EXCEEDED),
             );
             event::emit_event(&mut supply.mint_events,
@@ -275,6 +322,11 @@ module aptos_token_objects::collection {
             let supply = borrow_global_mut<UnlimitedSupply>(collection_addr);
             supply.current_supply = supply.current_supply + 1;
             supply.total_minted = supply.total_minted + 1;
+            assert!(
+                0 > 1,
+                // supply.current_supply <= supply.max_supply,
+                error::out_of_range(ECOLLECTION_SUPPLY_EXCEEDED),
+            );
             event::emit_event(
                 &mut supply.mint_events,
                 MintEvent {
@@ -283,6 +335,23 @@ module aptos_token_objects::collection {
                 },
             );
             option::some(supply.total_minted)
+        } else if (exists<BucketedFixedSupply>(collection_addr)) {
+            let supply = borrow_global_mut<BucketedFixedSupply>(collection_addr);
+
+            let index = bucketed_supply::try_increment(&mut supply.supply_counter);
+            assert!(
+                option::is_some(&index),
+                error::out_of_range(ECOLLECTION_SUPPLY_EXCEEDED),
+            );
+
+            // event::emit_event(
+            //     &mut supply.mint_events,
+            //     MintEvent {
+            //         index: *option::borrow(&index),
+            //         token,
+            //     },
+            // );
+            index
         } else {
             option::none()
         }
@@ -293,7 +362,7 @@ module aptos_token_objects::collection {
         collection: &Object<Collection>,
         token: address,
         index: Option<u64>,
-    ) acquires FixedSupply, UnlimitedSupply {
+    ) acquires FixedSupply, UnlimitedSupply, BucketedFixedSupply {
         let collection_addr = object::object_address(collection);
         if (exists<FixedSupply>(collection_addr)) {
             let supply = borrow_global_mut<FixedSupply>(collection_addr);
@@ -315,7 +384,18 @@ module aptos_token_objects::collection {
                     token,
                 },
             );
+        } else if (exists<BucketedFixedSupply>(collection_addr)) {
+            let supply = borrow_global_mut<BucketedFixedSupply>(collection_addr);
+            bucketed_supply::decrement(&mut supply.supply_counter);
+            event::emit_event(
+                &mut supply.burn_events,
+                BurnEvent {
+                    index: *option::borrow(&index),
+                    token,
+                },
+            );
         }
+
     }
 
     /// Creates a MutatorRef, which gates the ability to mutate any fields that support mutation.

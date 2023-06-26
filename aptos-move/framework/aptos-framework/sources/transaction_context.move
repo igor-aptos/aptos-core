@@ -1,6 +1,6 @@
 module aptos_framework::transaction_context {
 
-    use std::features;
+    // use std::features;
 
     /// AUID feature is not supported.
     const EAUID_NOT_SUPPORTED: u64 = 1;
@@ -18,7 +18,7 @@ module aptos_framework::transaction_context {
     /// Internally calls the private function `get_txn_hash`.
     /// This function is created for to feature gate the `get_txn_hash` function.
     public fun get_transaction_hash(): vector<u8> {
-        assert!(features::auids_enabled(), EAUID_NOT_SUPPORTED);
+        // assert!(features::auids_enabled(), EAUID_NOT_SUPPORTED);
         get_txn_hash()
     }
 
@@ -35,7 +35,7 @@ module aptos_framework::transaction_context {
     /// the private function `generate_unique_address`. This function is
     /// created for to feature gate the `generate_unique_address` function.
     public fun generate_auid_address(): address {
-        assert!(features::auids_enabled(), EAUID_NOT_SUPPORTED);
+        // assert!(features::auids_enabled(), EAUID_NOT_SUPPORTED);
         generate_unique_address()
     }
 
@@ -45,7 +45,7 @@ module aptos_framework::transaction_context {
     /// This method runs `generate_unique_address` native function and returns
     /// the generated unique address wrapped in the AUID class.
     public fun generate_auid(): AUID {
-        assert!(features::auids_enabled(), EAUID_NOT_SUPPORTED);
+        // assert!(features::auids_enabled(), EAUID_NOT_SUPPORTED);
         return AUID {
             unique_address: generate_unique_address()
         }
