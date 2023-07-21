@@ -51,6 +51,12 @@ module aptos_token_objects::token {
         mutation_events: event::EventHandle<MutationEvent>,
     }
 
+    #[resource_group_member(group = aptos_framework::object::ObjectGroup)]
+    struct TokenAppendix1 has key {
+        /// Unique identifier within the collection, optional, 0 means unassigned
+        concurrent_index: AggregatorSnapshot<u64>,
+    }
+
     /// This enables burning an NFT, if possible, it will also delete the object. Note, the data
     /// in inner and self occupies 32-bytes each, rather than have both, this data structure makes
     /// a small optimization to support either and take a fixed amount of 34-bytes.
@@ -89,17 +95,22 @@ module aptos_token_objects::token {
 
         let collection_addr = collection::create_collection_address(&creator_address, &collection_name);
         let collection = object::address_to_object<Collection>(collection_addr);
-        let id = collection::increment_supply(&collection, signer::address_of(&object_signer));
+        let id_pair = collection::increment_supply_v2(&collection, signer::address_of(&object_signer));
 
         let token = Token {
             collection,
-            index: option::get_with_default(&mut id, 0),
+            index: option::get_with_default(&mut id_pair.first, 0),
             description,
             name,
             uri,
             mutation_events: object::new_event_handle(&object_signer),
         };
         move_to(&object_signer, token);
+
+        let token_appendix_1 = TokenAppendix1 {
+            concurrent_index: option::get_with_default(&mut id_pair.second, aggregator_v2::create_snapshot<u64>(0)),
+        };
+        move_to(&object_signer, token_appendix_1);
 
         if (option::is_some(&royalty)) {
             royalty::init(constructor_ref, option::extract(&mut royalty))
@@ -287,8 +298,22 @@ module aptos_token_objects::token {
             mutation_events,
         } = move_from<Token>(addr);
 
+        let concurrent_index = if exists<TokenAppendix1>(collection_addr) {
+            let TokenAppendix1 {
+                concurrent_index,
+            } = move_from<TokenAppendix1>(addr);
+            aggregator_v2::read_snapshot(&concurrent_index)
+        } else {
+            0
+        };
+
+        let token_index = if (index > 0) {
+            index
+        } else {
+            concurrent_index
+        };
         event::destroy_handle(mutation_events);
-        collection::decrement_supply(&collection, addr, option::some(index));
+        collection::decrement_supply(&collection, addr, option::some(token_index));
     }
 
     public fun set_description(mutator_ref: &MutatorRef, description: String) acquires Token {
