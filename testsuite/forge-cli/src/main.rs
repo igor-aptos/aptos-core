@@ -529,7 +529,7 @@ fn single_test_suite(
         "fullnode_reboot_stress_test" => fullnode_reboot_stress_test(),
         "workload_mix" => workload_mix_test(),
         "account_creation" | "nft_mint" | "publishing" | "module_loading"
-        | "write_new_resource" => individual_workload_tests(test_name.into()),
+        | "write_new_resource" | "token_v2_ambassador_mint" => individual_workload_tests(test_name.into()),
         "graceful_overload" => graceful_overload(),
         // not scheduled on continuous
         "load_vs_perf_benchmark" => load_vs_perf_benchmark(),
@@ -1110,18 +1110,24 @@ fn individual_workload_tests(test_name: String) -> ForgeConfig {
                 ["processed_transactions_detailed_counters"] = true.into();
         }))
         .with_emit_job(
-            if test_name == "write_new_resource" {
+            if test_name == "write_new_resource" || test_name == "token_v2_ambassador_mint"  {
                 let account_creation_type = TransactionType::AccountGeneration {
                     add_created_accounts_to_pool: true,
                     max_account_working_set: 20_000_000,
                     creation_balance: 200_000_000,
                 };
-                let write_type = TransactionType::CallCustomModules {
-                    entry_point: EntryPoints::BytesMakeOrChange {
-                        data_length: Some(32),
+                let write_type = match test_name.as_str() {
+                    "write_new_resource" => {
+                        TransactionType::CallCustomModules {
+                            entry_point: EntryPoints::BytesMakeOrChange {
+                                data_length: Some(32),
+                            },
+                            num_modules: 1,
+                            use_account_pool: true,
+                        }
                     },
-                    num_modules: 1,
-                    use_account_pool: true,
+                    "token_v2_ambassador_mint" => TransactionTypeArg::TokenV2AmbassadorMint.materialize(1, true),
+                    _ => unreachable!("{}", test_name),
                 };
                 job.transaction_mix_per_phase(vec![
                     // warmup
@@ -1138,6 +1144,7 @@ fn individual_workload_tests(test_name: String) -> ForgeConfig {
                     },
                     "publishing" => TransactionTypeArg::PublishPackage.materialize_default(),
                     "module_loading" => TransactionTypeArg::NoOp.materialize(1000, false),
+
                     _ => unreachable!("{}", test_name),
                 })
             },
