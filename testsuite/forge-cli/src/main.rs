@@ -253,14 +253,8 @@ fn main() -> Result<()> {
     logger.build();
 
     let args = Args::parse();
-    let duration = Duration::from_secs(2100); // args.duration_secs as u64);
+    let duration = Duration::from_secs(args.duration_secs as u64);
     let suite_name: &str = args.suite.as_ref();
-
-    let suite_name = if suite_name == "realistic_env_max_load" {
-        "realistic_env_workload_sweep"
-    } else {
-        panic!("")
-    };
 
     let runtime = Runtime::new()?;
     match args.cli_cmd {
