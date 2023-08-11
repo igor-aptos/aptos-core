@@ -251,6 +251,14 @@ module std::features {
         is_enabled(AGGREGATOR_SNAPSHOTS)
     }
 
+    /// Whether enable MOVE functions to call create_auid method to create AUIDs.
+    /// Lifetime: transient
+    const CONCURRENT_TOKEN_V2_ENABLED: u64 = 31;
+
+    public fun concurrent_token_v2_enabled(): bool acquires Features {
+        is_enabled(CONCURRENT_TOKEN_V2_ENABLED)
+    }
+
     // ============================================================================================
     // Feature Flag Implementation
 

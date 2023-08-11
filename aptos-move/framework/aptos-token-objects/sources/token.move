@@ -7,9 +7,11 @@
 module aptos_token_objects::token {
     use std::error;
     use std::option::{Self, Option};
+    use std::features;
     use std::string::{Self, String};
     use std::signer;
     use std::vector;
+    use aptos_framework::aggregator_v2::{Self, AggregatorSnapshot};
     use aptos_framework::event;
     use aptos_framework::object::{Self, ConstructorRef, Object};
     use aptos_token_objects::collection::{Self, Collection};
@@ -37,8 +39,11 @@ module aptos_token_objects::token {
     struct Token has key {
         /// The collection from which this token resides.
         collection: Object<Collection>,
+        /// Deprecated in favor of index inside TokenAppendix1.
+        /// Will be populated until concurrent_token_v2_enabled feature flag is enabled.
+        ///
         /// Unique identifier within the collection, optional, 0 means unassigned
-        index: u64,
+        deprecated_index: u64,
         /// A brief description of the token.
         description: String,
         /// The name of the token, which should be unique within the collection; the length of name
@@ -54,7 +59,7 @@ module aptos_token_objects::token {
     #[resource_group_member(group = aptos_framework::object::ObjectGroup)]
     struct TokenAppendix1 has key {
         /// Unique identifier within the collection, optional, 0 means unassigned
-        concurrent_index: AggregatorSnapshot<u64>,
+        index: AggregatorSnapshot<u64>,
     }
 
     /// This enables burning an NFT, if possible, it will also delete the object. Note, the data
@@ -95,11 +100,22 @@ module aptos_token_objects::token {
 
         let collection_addr = collection::create_collection_address(&creator_address, &collection_name);
         let collection = object::address_to_object<Collection>(collection_addr);
-        let id_pair = collection::increment_supply_v2(&collection, signer::address_of(&object_signer));
+
+        let deprecated_index = 0;
+        let index = if (features::concurrent_token_v2_enabled()) {
+            option::destroy_with_default(
+                collection::increment_concurrent_supply(&collection, signer::address_of(&object_signer)),
+                aggregator_v2::create_snapshot<u64>(0)
+            )
+        } else {
+            let created_index = collection::increment_supply(&collection, signer::address_of(&object_signer));
+            deprecated_index = option::destroy_with_default(created_index, 0);
+            aggregator_v2::create_snapshot<u64>(deprecated_index)
+        };
 
         let token = Token {
             collection,
-            index: option::get_with_default(&mut id_pair.first, 0),
+            deprecated_index,
             description,
             name,
             uri,
@@ -108,7 +124,7 @@ module aptos_token_objects::token {
         move_to(&object_signer, token);
 
         let token_appendix_1 = TokenAppendix1 {
-            concurrent_index: option::get_with_default(&mut id_pair.second, aggregator_v2::create_snapshot<u64>(0)),
+            index,
         };
         move_to(&object_signer, token_appendix_1);
 
@@ -265,6 +281,21 @@ module aptos_token_objects::token {
         }
     }
 
+    /// This method allows minting/burning to happen in parallel, making it efficient.
+    public fun index_snapshot<T: key>(token: &Object<T>): AggregatorSnapshot<u64> acquires Token, TokenAppendix1 {
+        let token_address = object::object_address(token);
+        if (exists<TokenAppendix1>(token_address)) {
+            aggregator_v2::copy_snapshot(&borrow_global<TokenAppendix1>(token_address).index)
+        } else {
+            aggregator_v2::create_snapshot(borrow(token).deprecated_index)
+        }
+    }
+
+    #[view]
+    public fun index_view<T: key>(token: Object<T>): u64 acquires Token, TokenAppendix1 {
+        aggregator_v2::read_snapshot(&index_snapshot(&token))
+    }
+
     // Mutators
 
     inline fun borrow_mut(mutator_ref: &MutatorRef): &mut Token acquires Token {
@@ -275,7 +306,7 @@ module aptos_token_objects::token {
         borrow_global_mut<Token>(mutator_ref.self)
     }
 
-    public fun burn(burn_ref: BurnRef) acquires Token {
+    public fun burn(burn_ref: BurnRef) acquires Token, TokenAppendix1 {
         let addr = if (option::is_some(&burn_ref.inner)) {
             let delete_ref = option::extract(&mut burn_ref.inner);
             let addr = object::address_from_delete_ref(&delete_ref);
@@ -291,27 +322,22 @@ module aptos_token_objects::token {
 
         let Token {
             collection,
-            index,
+            deprecated_index,
             description: _,
             name: _,
             uri: _,
             mutation_events,
         } = move_from<Token>(addr);
 
-        let concurrent_index = if exists<TokenAppendix1>(collection_addr) {
+        let token_index = if (exists<TokenAppendix1>(addr)) {
             let TokenAppendix1 {
-                concurrent_index,
+                index,
             } = move_from<TokenAppendix1>(addr);
-            aggregator_v2::read_snapshot(&concurrent_index)
+            aggregator_v2::read_snapshot(&index)
         } else {
-            0
+            deprecated_index
         };
 
-        let token_index = if (index > 0) {
-            index
-        } else {
-            concurrent_index
-        };
         event::destroy_handle(mutation_events);
         collection::decrement_supply(&collection, addr, option::some(token_index));
     }
