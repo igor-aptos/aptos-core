@@ -48,7 +48,6 @@ require adding the field original_name.
 -  [Function `check_collection_exists`](#0x4_collection_check_collection_exists)
 -  [Function `borrow`](#0x4_collection_borrow)
 -  [Function `count`](#0x4_collection_count)
--  [Function `count_snapshot`](#0x4_collection_count_snapshot)
 -  [Function `creator`](#0x4_collection_creator)
 -  [Function `description`](#0x4_collection_description)
 -  [Function `name`](#0x4_collection_name)
@@ -1170,8 +1169,9 @@ Creates a MutatorRef, which gates the ability to mutate any fields that support 
 ## Function `count`
 
 Provides the count of the current selection if supply tracking is used
-This method is inneficient to do while minting/burning.
-Prefer using <code>count_snapshot</code> instead.
+
+Note: Calling this method from transaction that also mints/burns, prevents
+it from being parallelized.
 
 
 <pre><code>#[view]
@@ -1200,51 +1200,6 @@ Prefer using <code>count_snapshot</code> instead.
     } <b>else</b> <b>if</b> (<b>exists</b>&lt;<a href="collection.md#0x4_collection_ConcurrentUnlimitedSupply">ConcurrentUnlimitedSupply</a>&gt;(collection_address)) {
         <b>let</b> supply = <b>borrow_global_mut</b>&lt;<a href="collection.md#0x4_collection_ConcurrentUnlimitedSupply">ConcurrentUnlimitedSupply</a>&gt;(collection_address);
         <a href="../../aptos-framework/../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_some">option::some</a>(<a href="../../aptos-framework/doc/aggregator_v2.md#0x1_aggregator_v2_read">aggregator_v2::read</a>(&supply.current_supply))
-    } <b>else</b> {
-        <a href="../../aptos-framework/../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_none">option::none</a>()
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x4_collection_count_snapshot"></a>
-
-## Function `count_snapshot`
-
-Provides the count of the current selection if supply tracking is used
-as a snapshot, that you can store/transform.
-This method allows minting/burning to happen in parallel, making it efficient.
-
-
-<pre><code>#[view]
-<b>public</b> <b>fun</b> <a href="collection.md#0x4_collection_count_snapshot">count_snapshot</a>&lt;T: key&gt;(<a href="collection.md#0x4_collection">collection</a>: <a href="../../aptos-framework/doc/object.md#0x1_object_Object">object::Object</a>&lt;T&gt;): <a href="../../aptos-framework/../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_Option">option::Option</a>&lt;<a href="../../aptos-framework/doc/aggregator_v2.md#0x1_aggregator_v2_AggregatorSnapshot">aggregator_v2::AggregatorSnapshot</a>&lt;u64&gt;&gt;
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="collection.md#0x4_collection_count_snapshot">count_snapshot</a>&lt;T: key&gt;(<a href="collection.md#0x4_collection">collection</a>: Object&lt;T&gt;): Option&lt;AggregatorSnapshot&lt;u64&gt;&gt; <b>acquires</b> <a href="collection.md#0x4_collection_FixedSupply">FixedSupply</a>, <a href="collection.md#0x4_collection_UnlimitedSupply">UnlimitedSupply</a>, <a href="collection.md#0x4_collection_ConcurrentFixedSupply">ConcurrentFixedSupply</a>, <a href="collection.md#0x4_collection_ConcurrentUnlimitedSupply">ConcurrentUnlimitedSupply</a> {
-    <b>let</b> collection_address = <a href="../../aptos-framework/doc/object.md#0x1_object_object_address">object::object_address</a>(&<a href="collection.md#0x4_collection">collection</a>);
-    <a href="collection.md#0x4_collection_check_collection_exists">check_collection_exists</a>(collection_address);
-
-    <b>if</b> (<b>exists</b>&lt;<a href="collection.md#0x4_collection_FixedSupply">FixedSupply</a>&gt;(collection_address)) {
-        <b>let</b> supply = <b>borrow_global_mut</b>&lt;<a href="collection.md#0x4_collection_FixedSupply">FixedSupply</a>&gt;(collection_address);
-        <a href="../../aptos-framework/../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_some">option::some</a>(<a href="../../aptos-framework/doc/aggregator_v2.md#0x1_aggregator_v2_create_snapshot">aggregator_v2::create_snapshot</a>(supply.current_supply))
-    } <b>else</b> <b>if</b> (<b>exists</b>&lt;<a href="collection.md#0x4_collection_UnlimitedSupply">UnlimitedSupply</a>&gt;(collection_address)) {
-        <b>let</b> supply = <b>borrow_global_mut</b>&lt;<a href="collection.md#0x4_collection_UnlimitedSupply">UnlimitedSupply</a>&gt;(collection_address);
-        <a href="../../aptos-framework/../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_some">option::some</a>(<a href="../../aptos-framework/doc/aggregator_v2.md#0x1_aggregator_v2_create_snapshot">aggregator_v2::create_snapshot</a>(supply.current_supply))
-    } <b>else</b> <b>if</b> (<b>exists</b>&lt;<a href="collection.md#0x4_collection_ConcurrentFixedSupply">ConcurrentFixedSupply</a>&gt;(collection_address)) {
-        <b>let</b> supply = <b>borrow_global_mut</b>&lt;<a href="collection.md#0x4_collection_ConcurrentFixedSupply">ConcurrentFixedSupply</a>&gt;(collection_address);
-        <a href="../../aptos-framework/../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_some">option::some</a>(<a href="../../aptos-framework/doc/aggregator_v2.md#0x1_aggregator_v2_snapshot">aggregator_v2::snapshot</a>(&supply.current_supply))
-    } <b>else</b> <b>if</b> (<b>exists</b>&lt;<a href="collection.md#0x4_collection_ConcurrentUnlimitedSupply">ConcurrentUnlimitedSupply</a>&gt;(collection_address)) {
-        <b>let</b> supply = <b>borrow_global_mut</b>&lt;<a href="collection.md#0x4_collection_ConcurrentUnlimitedSupply">ConcurrentUnlimitedSupply</a>&gt;(collection_address);
-        <a href="../../aptos-framework/../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_some">option::some</a>(<a href="../../aptos-framework/doc/aggregator_v2.md#0x1_aggregator_v2_snapshot">aggregator_v2::snapshot</a>(&supply.current_supply))
     } <b>else</b> {
         <a href="../../aptos-framework/../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_none">option::none</a>()
     }

@@ -475,8 +475,9 @@ module aptos_token_objects::collection {
 
     #[view]
     /// Provides the count of the current selection if supply tracking is used
-    /// This method is inneficient to do while minting/burning.
-    /// Prefer using `count_snapshot` instead.
+    ///
+    /// Note: Calling this method from transaction that also mints/burns, prevents
+    /// it from being parallelized.
     public fun count<T: key>(collection: Object<T>): Option<u64> acquires FixedSupply, UnlimitedSupply, ConcurrentFixedSupply, ConcurrentUnlimitedSupply {
         let collection_address = object::object_address(&collection);
         check_collection_exists(collection_address);
@@ -493,31 +494,6 @@ module aptos_token_objects::collection {
         } else if (exists<ConcurrentUnlimitedSupply>(collection_address)) {
             let supply = borrow_global_mut<ConcurrentUnlimitedSupply>(collection_address);
             option::some(aggregator_v2::read(&supply.current_supply))
-        } else {
-            option::none()
-        }
-    }
-
-    #[view]
-    /// Provides the count of the current selection if supply tracking is used
-    /// as a snapshot, that you can store/transform.
-    /// This method allows minting/burning to happen in parallel, making it efficient.
-    public fun count_snapshot<T: key>(collection: Object<T>): Option<AggregatorSnapshot<u64>> acquires FixedSupply, UnlimitedSupply, ConcurrentFixedSupply, ConcurrentUnlimitedSupply {
-        let collection_address = object::object_address(&collection);
-        check_collection_exists(collection_address);
-
-        if (exists<FixedSupply>(collection_address)) {
-            let supply = borrow_global_mut<FixedSupply>(collection_address);
-            option::some(aggregator_v2::create_snapshot(supply.current_supply))
-        } else if (exists<UnlimitedSupply>(collection_address)) {
-            let supply = borrow_global_mut<UnlimitedSupply>(collection_address);
-            option::some(aggregator_v2::create_snapshot(supply.current_supply))
-        } else if (exists<ConcurrentFixedSupply>(collection_address)) {
-            let supply = borrow_global_mut<ConcurrentFixedSupply>(collection_address);
-            option::some(aggregator_v2::snapshot(&supply.current_supply))
-        } else if (exists<ConcurrentUnlimitedSupply>(collection_address)) {
-            let supply = borrow_global_mut<ConcurrentUnlimitedSupply>(collection_address);
-            option::some(aggregator_v2::snapshot(&supply.current_supply))
         } else {
             option::none()
         }
