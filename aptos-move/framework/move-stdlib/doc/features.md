@@ -73,6 +73,7 @@ return true.
 -  [Function `get_aggregator_snapshots_feature`](#0x1_features_get_aggregator_snapshots_feature)
 -  [Function `aggregator_snapshots_enabled`](#0x1_features_aggregator_snapshots_enabled)
 -  [Function `concurrent_token_v2_enabled`](#0x1_features_concurrent_token_v2_enabled)
+-  [Function `concurrent_fungible_asset_enabled`](#0x1_features_concurrent_fungible_asset_enabled)
 -  [Function `change_feature_flags`](#0x1_features_change_feature_flags)
 -  [Function `is_enabled`](#0x1_features_is_enabled)
 -  [Function `set`](#0x1_features_set)
@@ -227,6 +228,17 @@ Lifetime: transient
 
 
 <pre><code><b>const</b> <a href="features.md#0x1_features_COLLECT_AND_DISTRIBUTE_GAS_FEES">COLLECT_AND_DISTRIBUTE_GAS_FEES</a>: u64 = 6;
+</code></pre>
+
+
+
+<a name="0x1_features_CONCURRENT_FUNGIBLE_ASSET_ENABLED"></a>
+
+Whether enable MOVE functions to call create_auid method to create AUIDs.
+Lifetime: transient
+
+
+<pre><code><b>const</b> <a href="features.md#0x1_features_CONCURRENT_FUNGIBLE_ASSET_ENABLED">CONCURRENT_FUNGIBLE_ASSET_ENABLED</a>: u64 = 32;
 </code></pre>
 
 
@@ -1407,6 +1419,30 @@ Lifetime: transient
 
 <pre><code><b>public</b> <b>fun</b> <a href="features.md#0x1_features_concurrent_token_v2_enabled">concurrent_token_v2_enabled</a>(): bool <b>acquires</b> <a href="features.md#0x1_features_Features">Features</a> {
     <a href="features.md#0x1_features_is_enabled">is_enabled</a>(<a href="features.md#0x1_features_CONCURRENT_TOKEN_V2_ENABLED">CONCURRENT_TOKEN_V2_ENABLED</a>)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x1_features_concurrent_fungible_asset_enabled"></a>
+
+## Function `concurrent_fungible_asset_enabled`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="features.md#0x1_features_concurrent_fungible_asset_enabled">concurrent_fungible_asset_enabled</a>(): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="features.md#0x1_features_concurrent_fungible_asset_enabled">concurrent_fungible_asset_enabled</a>(): bool <b>acquires</b> <a href="features.md#0x1_features_Features">Features</a> {
+    <a href="features.md#0x1_features_is_enabled">is_enabled</a>(<a href="features.md#0x1_features_CONCURRENT_FUNGIBLE_ASSET_ENABLED">CONCURRENT_FUNGIBLE_ASSET_ENABLED</a>)
 }
 </code></pre>
 

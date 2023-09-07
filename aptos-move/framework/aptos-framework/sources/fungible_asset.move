@@ -3,7 +3,9 @@
 module aptos_framework::fungible_asset {
     use aptos_framework::event;
     use aptos_framework::object::{Self, Object, ConstructorRef, DeleteRef};
+    use aptos_framework::aggregator_v2::{Self, Aggregator};
     use std::string;
+    use std::features;
 
     use std::error;
     use std::option::{Self, Option};
@@ -70,6 +72,11 @@ module aptos_framework::fungible_asset {
         current: u128,
         // option::none() means unlimited supply.
         maximum: Option<u128>,
+    }
+
+    #[resource_group_member(group = aptos_framework::object::ObjectGroup)]
+    struct ConcurrentSupply has key {
+        current: Aggregator<u128>,
     }
 
     #[resource_group_member(group = aptos_framework::object::ObjectGroup)]
@@ -177,10 +184,18 @@ module aptos_framework::fungible_asset {
                 project_uri,
             }
         );
-        move_to(metadata_object_signer, Supply {
-            current: 0,
-            maximum: maximum_supply
-        });
+
+        if (features::concurrent_fungible_asset_enabled()) {
+            move_to(metadata_object_signer, ConcurrentSupply {
+                current: aggregator_v2::create_aggregator(option::get_with_default(&mut maximum_supply, MAX_U128)),
+            });
+        } else {
+            move_to(metadata_object_signer, Supply {
+                current: 0,
+                maximum: maximum_supply
+            });
+        };
+
         object::object_from_constructor_ref<Metadata>(constructor_ref)
     }
 
@@ -208,11 +223,14 @@ module aptos_framework::fungible_asset {
 
     #[view]
     /// Get the current supply from the `metadata` object.
-    public fun supply<T: key>(metadata: Object<T>): Option<u128> acquires Supply {
+    public fun supply<T: key>(metadata: Object<T>): Option<u128> acquires Supply, ConcurrentSupply {
         let metadata_address = object::object_address(&metadata);
         if (exists<Supply>(metadata_address)) {
             let supply = borrow_global<Supply>(metadata_address);
             option::some(supply.current)
+        } else if (exists<ConcurrentSupply>(metadata_address)) {
+            let supply = borrow_global<ConcurrentSupply>(metadata_address);
+            option::some(aggregator_v2::read(&supply.current))
         } else {
             option::none()
         }
@@ -220,11 +238,14 @@ module aptos_framework::fungible_asset {
 
     #[view]
     /// Get the maximum supply from the `metadata` object.
-    public fun maximum<T: key>(metadata: Object<T>): Option<u128> acquires Supply {
+    public fun maximum<T: key>(metadata: Object<T>): Option<u128> acquires Supply, ConcurrentSupply {
         let metadata_address = object::object_address(&metadata);
         if (exists<Supply>(metadata_address)) {
             let supply = borrow_global<Supply>(metadata_address);
             supply.maximum
+        } else if (exists<ConcurrentSupply>(metadata_address)) {
+            let supply = borrow_global<ConcurrentSupply>(metadata_address);
+            option::some(aggregator_v2::max_value(&supply.current))
         } else {
             option::none()
         }
@@ -377,7 +398,7 @@ module aptos_framework::fungible_asset {
     }
 
     /// Mint the specified `amount` of the fungible asset.
-    public fun mint(ref: &MintRef, amount: u64): FungibleAsset acquires Supply {
+    public fun mint(ref: &MintRef, amount: u64): FungibleAsset acquires Supply, ConcurrentSupply {
         assert!(amount > 0, error::invalid_argument(EAMOUNT_CANNOT_BE_ZERO));
         let metadata = ref.metadata;
         increase_supply(&metadata, amount);
@@ -390,7 +411,7 @@ module aptos_framework::fungible_asset {
 
     /// Mint the specified `amount` of the fungible asset to a destination store.
     public fun mint_to<T: key>(ref: &MintRef, store: Object<T>, amount: u64)
-    acquires FungibleStore, FungibleAssetEvents, Supply {
+    acquires FungibleStore, FungibleAssetEvents, Supply, ConcurrentSupply {
         deposit(store, mint(ref, amount));
     }
 
@@ -412,7 +433,7 @@ module aptos_framework::fungible_asset {
     }
 
     /// Burns a fungible asset
-    public fun burn(ref: &BurnRef, fa: FungibleAsset) acquires Supply {
+    public fun burn(ref: &BurnRef, fa: FungibleAsset) acquires Supply, ConcurrentSupply {
         let FungibleAsset {
             metadata,
             amount,
@@ -426,7 +447,7 @@ module aptos_framework::fungible_asset {
         ref: &BurnRef,
         store: Object<T>,
         amount: u64
-    ) acquires FungibleStore, FungibleAssetEvents, Supply {
+    ) acquires FungibleStore, FungibleAssetEvents, Supply, ConcurrentSupply {
         let metadata = ref.metadata;
         assert!(metadata == store_metadata(store), error::invalid_argument(EBURN_REF_AND_STORE_MISMATCH));
         let store_addr = object::object_address(&store);
@@ -535,32 +556,55 @@ module aptos_framework::fungible_asset {
     }
 
     /// Increase the supply of a fungible asset by minting.
-    fun increase_supply<T: key>(metadata: &Object<T>, amount: u64) acquires Supply {
+    fun increase_supply<T: key>(metadata: &Object<T>, amount: u64) acquires Supply, ConcurrentSupply {
         assert!(amount != 0, error::invalid_argument(EAMOUNT_CANNOT_BE_ZERO));
         let metadata_address = object::object_address(metadata);
-        assert!(exists<Supply>(metadata_address), error::not_found(ESUPPLY_NOT_FOUND));
-        let supply = borrow_global_mut<Supply>(metadata_address);
-        if (option::is_some(&supply.maximum)) {
-            let max = *option::borrow_mut(&mut supply.maximum);
+
+        if (exists<Supply>(metadata_address)) {
+            let supply = borrow_global_mut<Supply>(metadata_address);
+            if (option::is_some(&supply.maximum)) {
+                let max = *option::borrow_mut(&mut supply.maximum);
+                assert!(
+                    max - supply.current >= (amount as u128),
+                    error::out_of_range(EMAX_SUPPLY_EXCEEDED)
+                )
+            };
+            supply.current = supply.current + (amount as u128);
+        } else if (exists<ConcurrentSupply>(metadata_address)) {
+            let supply = borrow_global_mut<ConcurrentSupply>(metadata_address);
+
             assert!(
-                max - supply.current >= (amount as u128),
+                aggregator_v2::try_add(&mut supply.current, (amount as u128)),
                 error::out_of_range(EMAX_SUPPLY_EXCEEDED)
-            )
-        };
-        supply.current = supply.current + (amount as u128);
+            );
+        } else {
+            assert!(false, error::not_found(ESUPPLY_NOT_FOUND));
+        }
     }
 
     /// Decrease the supply of a fungible asset by burning.
-    fun decrease_supply<T: key>(metadata: &Object<T>, amount: u64) acquires Supply {
+    fun decrease_supply<T: key>(metadata: &Object<T>, amount: u64) acquires Supply, ConcurrentSupply {
         assert!(amount != 0, error::invalid_argument(EAMOUNT_CANNOT_BE_ZERO));
         let metadata_address = object::object_address(metadata);
-        assert!(exists<Supply>(metadata_address), error::not_found(ESUPPLY_NOT_FOUND));
-        let supply = borrow_global_mut<Supply>(metadata_address);
-        assert!(
-            supply.current >= (amount as u128),
-            error::invalid_state(ESUPPLY_UNDERFLOW)
-        );
-        supply.current = supply.current - (amount as u128);
+
+        if (exists<Supply>(metadata_address)) {
+            assert!(exists<Supply>(metadata_address), error::not_found(ESUPPLY_NOT_FOUND));
+            let supply = borrow_global_mut<Supply>(metadata_address);
+            assert!(
+                supply.current >= (amount as u128),
+                error::invalid_state(ESUPPLY_UNDERFLOW)
+            );
+            supply.current = supply.current - (amount as u128);
+        } else if (exists<ConcurrentSupply>(metadata_address)) {
+            let supply = borrow_global_mut<ConcurrentSupply>(metadata_address);
+
+            assert!(
+                aggregator_v2::try_sub(&mut supply.current, (amount as u128)),
+                error::out_of_range(ESUPPLY_UNDERFLOW)
+            );
+        } else {
+            assert!(false, error::not_found(ESUPPLY_NOT_FOUND));
+        }
     }
 
     inline fun borrow_fungible_metadata<T: key>(

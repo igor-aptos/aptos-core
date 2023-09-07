@@ -259,6 +259,14 @@ module std::features {
         is_enabled(CONCURRENT_TOKEN_V2_ENABLED)
     }
 
+    /// Whether enable MOVE functions to call create_auid method to create AUIDs.
+    /// Lifetime: transient
+    const CONCURRENT_FUNGIBLE_ASSET_ENABLED: u64 = 32;
+
+    public fun concurrent_fungible_asset_enabled(): bool acquires Features {
+        is_enabled(CONCURRENT_FUNGIBLE_ASSET_ENABLED)
+    }
+
     // ============================================================================================
     // Feature Flag Implementation
 
