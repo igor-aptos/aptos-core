@@ -241,15 +241,25 @@ module std::features {
     /// Lifetime: transient
     const SIGNATURE_CHECKER_V2_SCRIPT_FIX: u64 = 29;
 
-    /// Whether the aggregator snapshots feature is enabled.
+    /// Whether the aggregator API feature is enabled - i.e. whether
+    /// Aggregator and AggregatorSnapshot objects can be created
+    /// (and consequently interacted with).
     /// Lifetime: transient
-    const AGGREGATOR_SNAPSHOTS: u64 = 30;
+    const AGGREGATOR_API: u64 = 30;
 
-    public fun get_aggregator_snapshots_feature(): u64 { AGGREGATOR_SNAPSHOTS }
+    public fun get_aggregator_api_feature(): u64 { AGGREGATOR_API }
 
-    public fun aggregator_snapshots_enabled(): bool acquires Features {
-        is_enabled(AGGREGATOR_SNAPSHOTS)
+    public fun aggregator_api_enabled(): bool acquires Features {
+        is_enabled(AGGREGATOR_API)
     }
+
+    const SAFER_RESOURCE_GROUPS: u64 = 31;
+
+    /// Whether the efficient and concurrent execution of aggregators is enabled.
+    /// Without this flags, aggregators are executed sequentially, creating
+    /// read/write conflicts.
+    /// After this flag is enabled, aggregators modifications stop creating conflict, as possible.
+    const AGGREGATOR_EXECUTION: u64 = 32;
 
     // ============================================================================================
     // Feature Flag Implementation
