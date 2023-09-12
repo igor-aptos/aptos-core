@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    aggregator_extension::AggregatorID,
+    aggregator_extension::{AggregatorID, SnapshotValue},
     delta_change_set::{serialize, DeltaOp},
     module::AGGREGATOR_MODULE,
 };
@@ -77,7 +77,7 @@ pub trait TAggregatorView {
         &self,
         _id: &Self::IdentifierV2,
         _mode: AggregatorReadMode,
-    ) -> anyhow::Result<u128> {
+    ) -> anyhow::Result<SnapshotValue> {
         unimplemented!("Aggregator V2 is not yet supported")
     }
 
@@ -193,11 +193,12 @@ pub mod test_utils {
             &self,
             id: &Self::IdentifierV2,
             _mode: AggregatorReadMode,
-        ) -> anyhow::Result<u128> {
+        ) -> anyhow::Result<SnapshotValue> {
             self.v2_store
                 .get(id)
                 .cloned()
                 .ok_or_else(|| anyhow::Error::msg(format!("Value does not exist for {:?}", id)))
+                .map(SnapshotValue::Integer)
         }
     }
 }

@@ -75,17 +75,22 @@ impl<'a> NativeAggregatorContext<'a> {
             match id {
                 AggregatorID::Ephemeral(_) => {
                     let change = match state {
-                        AggregatorState::Data { value } => AggregatorChange::Data { value },
-                        // TODO - read creates a change, remove it?
+                        AggregatorState::Data { value } => Some(AggregatorChange::Data { value }),
                         AggregatorState::Delta { delta, history, .. } => {
-                            AggregatorChange::AggregatorDelta {
-                                delta,
-                                max_value,
-                                history,
+                            if delta.is_zero() && history.is_empty() {
+                                None
+                            } else {
+                                Some(AggregatorChange::AggregatorDelta {
+                                    delta,
+                                    max_value,
+                                    history,
+                                })
                             }
                         },
                     };
-                    aggregator_v2_changes.insert(id, change);
+                    if let Some(change) = change {
+                        aggregator_v2_changes.insert(id, change);
+                    }
                 },
                 AggregatorID::Legacy { .. } => {
                     let change = match state {
@@ -112,10 +117,15 @@ impl<'a> NativeAggregatorContext<'a> {
                 AggregatorSnapshotState::Delta {
                     base_aggregator,
                     delta,
-                    formula,
                 } => Some(AggregatorChange::SnapshotDelta {
                     delta,
                     base_aggregator,
+                }),
+                AggregatorSnapshotState::Concat {
+                    base_snapshot,
+                    formula,
+                } => Some(AggregatorChange::SnapshotConcat {
+                    base_snapshot,
                     formula,
                 }),
                 AggregatorSnapshotState::Reference { .. } => None,

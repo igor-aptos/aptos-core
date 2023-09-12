@@ -24,8 +24,11 @@ pub enum AggregatorChange {
     /// Value of delta is:
     /// formula(value of base_aggregator at the begginning of the transaction + delta)
     SnapshotDelta {
-        delta: SignedU128,
         base_aggregator: AggregatorID,
+        delta: SignedU128,
+    },
+    SnapshotConcat {
+        base_snapshot: AggregatorID,
         formula: DerivedFormula,
     },
 }
@@ -49,6 +52,7 @@ impl AggregatorChange {
                 // History validation should already be done before this call.
                 expect_ok(BoundedMath::new(u128::MAX).unsigned_add_delta(base, delta))
             },
+            AggregatorChange::SnapshotConcat { .. } => unimplemented!(),
         }
     }
 
@@ -96,10 +100,12 @@ impl AggregatorChange {
                 AggregatorChange::SnapshotDelta { .. } => Err(code_invariant_error(
                     "SnapshotDelta cannot come before AggregatorDelta",
                 )),
+                AggregatorChange::SnapshotConcat { .. } => unimplemented!(),
             },
             AggregatorChange::SnapshotDelta { .. } => {
                 unimplemented!()
             },
+            AggregatorChange::SnapshotConcat { .. } => unimplemented!(),
         }
     }
 

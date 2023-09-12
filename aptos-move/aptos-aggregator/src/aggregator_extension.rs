@@ -12,7 +12,7 @@ use aptos_types::{
 };
 use move_binary_format::errors::{PartialVMError, PartialVMResult};
 use move_core_types::account_address::AccountAddress;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AggregatorHandle(pub AccountAddress);
@@ -101,6 +101,27 @@ impl SpeculativeStartValue {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DerivedFormula {
+    Concat { prefix: Vec<u8>, suffix: Vec<u8> },
+}
+
+impl DerivedFormula {
+    pub fn apply(&self, base: &SnapshotValue) -> SnapshotValue {
+        match self {
+            DerivedFormula::Concat { prefix, suffix } => {
+                let mut result = prefix.clone();
+                match base {
+                    SnapshotValue::Integer(value) => result.extend(value.to_string().as_bytes()),
+                    SnapshotValue::String(value) => result.extend(value),
+                };
+                result.extend(suffix);
+                SnapshotValue::String(result)
+            },
+        }
+    }
+}
+
 /// Describes the state of each aggregator instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AggregatorState {
@@ -121,16 +142,21 @@ pub enum SnapshotValue {
     String(Vec<u8>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DerivedFormula {
-    Identity,
-    Concat { prefix: Vec<u8>, suffix: Vec<u8> },
+impl SnapshotValue {
+    pub fn into_aggregator_value(self) -> PartialVMResult<u128> {
+        match self {
+            SnapshotValue::Integer(value) => Ok(value),
+            SnapshotValue::String(_) => Err(code_invariant_error(
+                "Tried calling into_aggregator_value on String SnapshotValue",
+            )),
+        }
+    }
 }
 
 // Aggregator snapshot is immutable struct, once created - value is fixed.
 // If we want to provide mutability APIs in the future, it should be
 // copy-on-write - i.e. a new aggregator_id should be created for it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AggregatorSnapshotState {
     // Created in this transaction, with explicit value
     Data {
@@ -140,6 +166,10 @@ pub enum AggregatorSnapshotState {
     Delta {
         base_aggregator: AggregatorID,
         delta: SignedU128,
+    },
+    // Created in this transaction, via string_concat(prefix, &snapshot, suffix)
+    Concat {
+        base_snapshot: AggregatorID,
         formula: DerivedFormula,
     },
     // Accessed in this transaction, based on the ID
@@ -155,7 +185,6 @@ pub struct AggregatorSnapshot {
     #[allow(dead_code)]
     id: AggregatorID,
 
-    #[allow(dead_code)]
     state: AggregatorSnapshotState,
 }
 
@@ -323,7 +352,7 @@ impl Aggregator {
         {
             // If value is Unset, we read it
             if let SpeculativeStartValue::Unset = speculative_start_value {
-                if *delta != SignedU128::Positive(0) || !history.is_empty() {
+                if delta.is_zero() || !history.is_empty() {
                     return Err(code_invariant_error(
                         "Delta or history not empty with Unset speculative value",
                     ));
@@ -335,6 +364,7 @@ impl Aggregator {
                     // TODO: use integers directly, or some wrapped type.
                     id => resolver
                         .get_aggregator_v2_value(id, AggregatorReadMode::LastCommitted)
+                        .and_then(|v| Ok(v.into_aggregator_value()?))
                         .map(Some),
                 };
                 let value_from_storage = maybe_value_from_storage
@@ -395,6 +425,7 @@ impl Aggregator {
                     // TODO: use integers directly, or some wrapped type.
                     id => resolver
                         .get_aggregator_v2_value(id, AggregatorReadMode::Aggregated)
+                        .and_then(|v| Ok(v.into_aggregator_value()?))
                         .map(Some),
                 };
                 let value_from_storage = maybe_value_from_storage
@@ -464,15 +495,18 @@ impl AggregatorData {
         id: AggregatorID,
         max_value: u128,
     ) -> PartialVMResult<&mut Aggregator> {
-        let aggregator = self.aggregators.entry(id.clone()).or_insert(Aggregator {
-            id,
-            state: AggregatorState::Delta {
-                speculative_start_value: SpeculativeStartValue::Unset,
-                delta: SignedU128::Positive(0),
-                history: DeltaHistory::new(),
-            },
-            max_value,
-        });
+        let aggregator = self
+            .aggregators
+            .entry(id.clone())
+            .or_insert_with(|| Aggregator {
+                id,
+                state: AggregatorState::Delta {
+                    speculative_start_value: SpeculativeStartValue::Unset,
+                    delta: SignedU128::Positive(0),
+                    history: DeltaHistory::new(),
+                },
+                max_value,
+            });
         Ok(aggregator)
     }
 
@@ -511,13 +545,11 @@ impl AggregatorData {
         }
     }
 
-    pub fn snapshot(&mut self, id: &AggregatorID) -> PartialVMResult<u64> {
+    pub fn snapshot(&mut self, id: &AggregatorID, max_value: u128) -> PartialVMResult<u64> {
         let new_id = self.generate_id();
         let snapshot_id = AggregatorID::ephemeral(new_id);
-        let aggregator = self
-            .aggregators
-            .get(id)
-            .ok_or_else(|| code_invariant_error("Aggregator ID not found"))?;
+
+        let aggregator = self.get_aggregator(id.clone(), max_value)?;
 
         let snapshot_state = match aggregator.state {
             // If aggregator is in Data state, we don't need to depend on it, and can just take the value.
@@ -527,7 +559,6 @@ impl AggregatorData {
             AggregatorState::Delta { delta, .. } => AggregatorSnapshotState::Delta {
                 base_aggregator: id.clone(),
                 delta,
-                formula: DerivedFormula::Identity,
             },
         };
 
@@ -539,8 +570,103 @@ impl AggregatorData {
         Ok(new_id)
     }
 
-    pub fn read_snapshot(&self, _id: AggregatorID) -> PartialVMResult<u128> {
-        unimplemented!();
+    pub fn create_new_snapshot(&mut self, id: AggregatorID, value: SnapshotValue) {
+        let snapshot_state = AggregatorSnapshotState::Data { value };
+
+        self.aggregator_snapshots
+            .insert(id.clone(), AggregatorSnapshot {
+                id,
+                state: snapshot_state,
+            });
+    }
+
+    /// Returns a mutable reference to an aggregator snapshot with `id`.
+    /// If transaction that is currently executing did not initialize it, a new aggregator snapshot instance is created.
+    /// Note: when we say "aggregator snapshot instance" here we refer to Rust struct and
+    /// not to the Move aggregator snapshot.
+    pub fn get_snapshot(
+        &mut self,
+        id: AggregatorID,
+        resolver: &dyn AggregatorResolver,
+    ) -> PartialVMResult<&AggregatorSnapshot> {
+        let snapshot = match self.aggregator_snapshots.entry(id.clone()) {
+            Entry::Vacant(entry) => {
+                // Otherwise, we have to go to storage and read the value.
+                let value_from_storage = resolver
+                    .get_aggregator_v2_value(&id, AggregatorReadMode::Aggregated)
+                    .map_err(|e| {
+                        extension_error(format!(
+                            "Could not find the value of the aggregator: {}",
+                            e
+                        ))
+                    })?;
+                entry.insert(AggregatorSnapshot {
+                    id,
+                    state: AggregatorSnapshotState::Reference {
+                        speculative_value: value_from_storage,
+                    },
+                })
+            },
+            Entry::Occupied(entry) => entry.into_mut(),
+        };
+        Ok(snapshot)
+    }
+
+    pub fn read_snapshot(
+        &mut self,
+        id: AggregatorID,
+        resolver: &dyn AggregatorResolver,
+    ) -> PartialVMResult<SnapshotValue> {
+        let snapshot_state = self.get_snapshot(id.clone(), resolver)?.state.clone();
+        match snapshot_state {
+            AggregatorSnapshotState::Data { value } => Ok(value.clone()),
+            AggregatorSnapshotState::Delta {
+                base_aggregator,
+                delta,
+            } => match self.aggregators.get_mut(&base_aggregator) {
+                Some(aggregator) => {
+                    let value = aggregator.read_most_recent_aggregator_value(resolver)?;
+                    Ok(SnapshotValue::Integer(expect_ok(
+                        BoundedMath::new(aggregator.max_value).unsigned_add_delta(value, &delta),
+                    )?))
+                },
+                None => resolver
+                    .get_aggregator_v2_value(&id, AggregatorReadMode::Aggregated)
+                    .map_err(|e| {
+                        extension_error(format!(
+                            "Could not find the value of the aggregator: {}",
+                            e
+                        ))
+                    }),
+            },
+            AggregatorSnapshotState::Concat {
+                base_snapshot,
+                formula,
+            } => {
+                let base = self.read_snapshot(base_snapshot.clone(), resolver)?;
+                Ok(formula.apply(&base))
+            },
+            AggregatorSnapshotState::Reference { speculative_value } => {
+                Ok(speculative_value.clone())
+            },
+        }
+    }
+
+    pub fn string_concat(&mut self, id: AggregatorID, prefix: Vec<u8>, suffix: Vec<u8>) -> u64 {
+        let new_id = self.generate_id();
+        let snapshot_id = AggregatorID::ephemeral(new_id);
+
+        let snapshot_state = AggregatorSnapshotState::Concat {
+            base_snapshot: id.clone(),
+            formula: DerivedFormula::Concat { prefix, suffix },
+        };
+
+        self.aggregator_snapshots
+            .insert(snapshot_id.clone(), AggregatorSnapshot {
+                id: snapshot_id,
+                state: snapshot_state,
+            });
+        new_id
     }
 
     pub fn generate_id(&mut self) -> u64 {
