@@ -1,6 +1,7 @@
 // Copyright © Aptos Foundation
 // SPDX-License-Identifier: Apache-2.0
 
+use super::helpers_v2::get_aggregator_fields_u64;
 use crate::natives::{
     aggregator_natives::{
         helpers_v2::{
@@ -49,6 +50,29 @@ fn is_string_type(context: &SafeNativeContext, type_arg: &Type) -> SafeNativeRes
             && type_.address == AccountAddress::ONE);
     }
     Ok(false)
+}
+
+/// Given the list of native function arguments and a type, returns a tuple of its
+/// fields: (`aggregator id`, `limit`).
+pub fn get_aggregator_fields_by_type(
+    ty_arg: &Type,
+    agg: &StructRef,
+) -> SafeNativeResult<(u128, u128)> {
+    match ty_arg {
+        Type::U128 => {
+            // Get aggregator information and a value to add.
+            let (id, limit) = get_aggregator_fields_u128(agg)?;
+            Ok((id, limit))
+        },
+        Type::U64 => {
+            // Get aggregator information and a value to add.
+            let (id, limit) = get_aggregator_fields_u64(agg)?;
+            Ok((id as u128, limit as u128))
+        },
+        _ => Err(SafeNativeError::Abort {
+            abort_code: EUNSUPPORTED_AGGREGATOR_TYPE,
+        }),
+    }
 }
 
 /// Given the list of native function arguments and a type, pop the next argument if it is of given type.
@@ -131,7 +155,7 @@ fn native_try_add(
 
     let input = pop_value_by_type(&ty_args[0], &mut args)?;
     let agg_struct = safely_pop_arg!(args, StructRef);
-    let (agg_value, agg_max_value) = get_aggregator_fields_u128(&agg_struct)?;
+    let (agg_value, agg_max_value) = get_aggregator_fields_by_type(&ty_args[0], &agg_struct)?;
 
     let result_value = if context.aggregator_execution_enabled() {
         let id = aggregator_value_field_as_id(agg_value)?;
@@ -166,7 +190,7 @@ fn native_try_sub(
 
     let input = pop_value_by_type(&ty_args[0], &mut args)?;
     let agg_struct = safely_pop_arg!(args, StructRef);
-    let (agg_value, agg_max_value) = get_aggregator_fields_u128(&agg_struct)?;
+    let (agg_value, agg_max_value) = get_aggregator_fields_by_type(&ty_args[0], &agg_struct)?;
 
     let result_value = if context.aggregator_execution_enabled() {
         let id = aggregator_value_field_as_id(agg_value)?;
@@ -201,7 +225,8 @@ fn native_read(
     debug_assert_eq!(args.len(), 1);
     context.charge(AGGREGATOR_V2_READ_BASE)?;
 
-    let (agg_value, agg_max_value) = get_aggregator_fields_u128(&safely_pop_arg!(args, StructRef))?;
+    let (agg_value, agg_max_value) =
+        get_aggregator_fields_by_type(&ty_args[0], &safely_pop_arg!(args, StructRef))?;
 
     let result_value = if context.aggregator_execution_enabled() {
         let id = aggregator_value_field_as_id(agg_value)?;
@@ -234,10 +259,11 @@ fn native_snapshot(
     debug_assert_eq!(args.len(), 1);
     context.charge(AGGREGATOR_V2_SNAPSHOT_BASE)?;
 
-    let (agg_value, _agg_max_value) = get_aggregator_fields_u128(&safely_pop_arg!(args, StructRef))?;
+    let (agg_value, _agg_max_value) =
+        get_aggregator_fields_by_type(&ty_args[0], &safely_pop_arg!(args, StructRef))?;
 
     let result_value = if context.aggregator_execution_enabled() {
-        let aggregator_id: AggregatorID = aggregator_value_field_as_id(agg_value)?;
+        let aggregator_id = aggregator_value_field_as_id(agg_value)?;
         let aggregator_context = context.extensions().get::<NativeAggregatorContext>();
         let mut aggregator_data = aggregator_context.aggregator_data.borrow_mut();
         aggregator_data.snapshot(&aggregator_id)? as u128
